@@ -2,14 +2,13 @@ use cosmwasm_std::{Addr, Coin, StdResult};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
 use crate::{
-    error::ContractError,
-    execute, instantiate,
-    msg::{ExecMsg, HighestBidResp, InstantiateMsg, OwnerResp, QueryMsg}, query,
+    execute, instantiate, query, msg::{InstantiateMsg, ContractResp, QueryMsg, ExecMsg, OpenResp}, error::ContractError
 };
 
-pub struct BiddingContract(Addr);
+#[derive(Debug)]
+pub struct OTCContract(Addr);
 
-impl BiddingContract {
+impl OTCContract {
     pub fn addr(&self) -> &Addr {
         &self.0
     }
@@ -25,22 +24,42 @@ impl BiddingContract {
         code_id: u64,
         sender: &Addr,
         label: &str,
-        owner: &Option<Addr>,
-    ) -> StdResult<Self> {
+        funds: Vec<Coin>,
+        price: Coin,
+    ) -> Result<Self, ContractError> {
         app.instantiate_contract(
             code_id,
             sender.clone(),
             &InstantiateMsg {
-                owner: owner.clone(),
+                price: price.clone(),
             },
-            &[],
+            &funds,
             label,
             None,
         )
-        .map(BiddingContract)
+        .map(OTCContract)
         .map_err(|err| err.downcast().unwrap())
     }
 
+    #[track_caller]
+    pub fn query_status(&self, app: &App) -> StdResult<ContractResp> {
+        app.wrap()
+            .query_wasm_smart(self.0.clone(), &QueryMsg::Status {})
+    }
+
+    #[track_caller]
+    pub fn query_open(&self, app: &App) -> StdResult<OpenResp> {
+        app.wrap()
+            .query_wasm_smart(self.0.clone(), &QueryMsg::IsOpen {})
+    }
+
+    #[track_caller]
+    pub fn buy(&self, app: &mut App, sender: &Addr, funds: &[Coin]) -> Result<(), ContractError> {
+        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Buy {}, funds)
+            .map_err(|err| err.downcast().unwrap())
+            .map(|_| ())
+    }
+    /*
     #[track_caller]
     pub fn query_highestbid(&self, app: &App) -> StdResult<HighestBidResp> {
         app.wrap()
@@ -79,5 +98,5 @@ impl BiddingContract {
         app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::RetractTo { receiver: receiver }, &[])
             .map_err(|err| err.downcast().unwrap())
             .map(|_| ())
-    }
+    }*/
 }

@@ -21,8 +21,8 @@ pub fn instantiate(
     _env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
-) -> StdResult<Response> {
-    contract::instantiate(deps, msg.owner, info.sender)
+) -> Result<Response, ContractError> {
+    contract::instantiate(deps, info.sender, info.funds, msg.price)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -31,18 +31,15 @@ pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
     use msg::QueryMsg::*;
 
     match msg {
-        HighestBid {} => to_binary(&query::highestbidvalue(deps)?),
-        Owner {} => to_binary(&query::owneraddr(deps)?),
-        CurrentBid { address } => to_binary(&query::currentbid(deps, address)?),
-        IsClosed{} => to_binary(&query::isclosed(deps)?),
-        Winner{} => to_binary(&query::winner(deps)?),
+        IsOpen{} => to_binary(&query::isopen(deps)?),
+        Status{} => to_binary(&query::status(deps)?),
     }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: msg::ExecMsg,
 ) -> Result<Response, ContractError> {
@@ -50,9 +47,7 @@ pub fn execute(
     use msg::ExecMsg::*;
 
     match msg {
-        Bid {} => exec::bid(deps, info),
-        Close {} => exec::close(deps, info),
-        Retract{} => exec::retract(deps, info),
-        RetractTo { receiver } => exec::retract_to(deps, info, receiver),
+        Buy {} => exec::buy(deps, info),
+        Close {} => exec::close(deps, env, info),
     }
 }

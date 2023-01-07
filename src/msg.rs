@@ -1,56 +1,37 @@
-use cosmwasm_std::{Addr, Coin};
+use cosmwasm_std::Addr;
+use cosmwasm_std::Coin;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_schema::QueryResponses;
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum QueryMsg {
-    #[returns(HighestBidResp)]
-    HighestBid {},
-    #[returns(OwnerResp)]
-    Owner {},
-    #[returns(ClosedResp)]
-    IsClosed{},
-    #[returns(WinnerResp)]
-    Winner{},
-    #[returns(CurrentBidResp)]
-    CurrentBid{ address: Addr },
-
+    #[returns(OpenResp)]
+    IsOpen{},
+    #[returns(ContractResp)]
+    Status{},
 }
 
 #[cw_serde]
 pub enum ExecMsg {
-    Bid {},
-    Close{},
-    Retract{},
-    RetractTo { receiver: Addr },
-}
-#[cw_serde]
-pub struct HighestBidResp {
-    pub highestbid: Coin,
-    pub highestbidder: Option<Addr>,
+    Buy {},
+    Close {},
 }
 
 #[cw_serde]
-pub struct OwnerResp {
-    pub owner: Addr,
+pub struct OpenResp{
+    pub isopen: bool,
 }
 
 #[cw_serde]
-pub struct WinnerResp {
-    pub winner: Addr,
-}
-
-#[cw_serde]
-pub struct ClosedResp{
-    pub isclosed: bool,
-}
-#[cw_serde]
-pub struct CurrentBidResp{
-    pub currentbid: Option<Coin>,
+pub struct ContractResp{
+    pub isopen: bool,
+    pub offer: Vec<Coin>,
+    pub price: Coin,
+    pub receiver: Addr,
 }
 
 #[cw_serde]
 pub struct InstantiateMsg {
-    pub owner: Option<Addr>,
+    pub price: Coin,
 }

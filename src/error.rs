@@ -6,21 +6,15 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
-    #[error("Bidding failed, must be higher than highest bid")]
-    Biddingfail,
+    #[error("No offer made")]
+    NoFunds,
 
-    #[error("Bidding failed, must make a bid")]
-    BiddingEmpty,
-
-    #[error("No bids have been made")]
-    NoBids,
-
-    #[error("Contract already closed")]
+    #[error("OTC deal is already closed")]
     ContractClosed,
 
-    #[error("Contract not closed yet")]
-    ContractNotClosed,
+    #[error("Offer failed, must be equal or higher than asking price")]
+    OfferFail,
 
-    #[error("Unauthorized: Only {owner} can call it.")]
+    #[error("You can't close the contract. Only {owner} can")]
     NotOwner { owner: String },
 }

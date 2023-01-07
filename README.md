@@ -1,1 +1,2 @@
-# cw_bidding_platform
+# OTC platform
+# otc_platform

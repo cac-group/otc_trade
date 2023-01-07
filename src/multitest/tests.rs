@@ -1,603 +1,277 @@
-use crate::{
-    error::ContractError,
-    msg::{HighestBidResp, OwnerResp},
-    multitest::contract::BiddingContract,
-};
-use cosmwasm_std::{coin, coins, Addr};
+use crate::{error::ContractError, msg::{ContractResp, OpenResp}, multitest::contract::OTCContract};
+use cosmwasm_std::{coin, coins, Addr, Coin};
 use cw_multi_test::{App, Executor};
 
 #[test]
-fn instantiate_with_different_owner() {
-    let mut app = App::default();
+fn instantiate_correctly() {
     let sender = Addr::unchecked("sender");
-    let owner = Addr::unchecked("owner");
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &Some(owner))
+    let mut app = App::new(|router, _api, storage| {
+        router
+            .bank
+            .init_balance(storage, &sender.clone(), coins(10000000, "ujuno"))
             .unwrap();
+    });
 
-    let resp = contract.query_owner(&app).unwrap();
+    let code_id = OTCContract::store_code(&mut app);
+
+    let contract = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &sender,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(10000, "uatom"),
+    )
+    .unwrap();
+
+    let resp = contract.query_status(&app).unwrap();
     assert_eq!(
         resp,
-        OwnerResp {
-            owner: Addr::unchecked("owner")
+        ContractResp {
+            isopen: true,
+            offer: coins(10000000, "ujuno"),
+            price: coin(10000, "uatom"),
+            receiver: sender
         }
     );
 }
 
 #[test]
-fn instantiate_with_no_owner() {
-    let mut app = App::default();
-    let sender = Addr::unchecked("sender");
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
-
-    let resp = contract.query_owner(&app).unwrap();
-    assert_eq!(
-        resp,
-        OwnerResp {
-            owner: Addr::unchecked("sender")
-        }
-    );
-}
-
-#[test]
-fn highestbid_with_nobids() {
+fn instantiate_with_no_funds() {
     let mut app = App::default();
     let sender = Addr::unchecked("sender");
 
-    let code_id = BiddingContract::store_code(&mut app);
+    let code_id = OTCContract::store_code(&mut app);
 
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
+    let resp = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &sender,
+        "OTC contract",
+        Vec::new(),
+        coin(10000, "uatom"),
+    )
+    .unwrap_err();
+
+    assert_eq!(resp, ContractError::NoFunds,);
+}
+
+#[test]
+fn buy_succesfully() {
+    let seller = Addr::unchecked("seller");
+    let buyer = Addr::unchecked("buyer");
+    let mut funds: Vec<Coin> = Vec::new();
+    funds.push(coin(10000000, "ujuno"));
+    funds.push(coin(100000, "uatom"));
+    let mut app = App::new(|router, _api, storage| {
+        router
+            .bank
+            .init_balance(storage, &seller.clone(), funds)
             .unwrap();
+    });
 
-    let resp = contract.query_highestbid(&app).unwrap();
+    app.send_tokens(seller.clone(), buyer.clone(), &coins(50000, "uatom"))
+        .unwrap();
+
+    let code_id = OTCContract::store_code(&mut app);
+
+    let contract = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &seller,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(50000, "uatom"),
+    )
+    .unwrap();
+
+    contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap();
+
     assert_eq!(
-        resp,
-        HighestBidResp {
-            highestbid: coin(0, "atom"),
-            highestbidder: None,
-        }
+        app.wrap().query_all_balances(buyer).unwrap(),
+        coins(10000000, "ujuno")
     );
 }
 
-#[test]
-fn bid_failed_nofunds() {
-    let sender = Addr::unchecked("sender");
 
+#[test]
+fn buy_not_enough_funds() {
+    let seller = Addr::unchecked("seller");
+    let buyer = Addr::unchecked("buyer");
+    let mut funds: Vec<Coin> = Vec::new();
+    funds.push(coin(10000000, "ujuno"));
+    funds.push(coin(100000, "uatom"));
     let mut app = App::new(|router, _api, storage| {
         router
             .bank
-            .init_balance(storage, &sender, coins(100000, "atom"))
+            .init_balance(storage, &seller.clone(), funds)
             .unwrap();
     });
 
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
-
-    let err = contract.bid(&mut app, &sender, &[]).unwrap_err();
-
-    assert_eq!(ContractError::BiddingEmpty {}, err);
-}
-#[test]
-fn successful_first_bid() {
-    let sender = Addr::unchecked("sender");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender, coins(100000, "atom"))
-            .unwrap();
-    });
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    let resp = contract.query_highestbid(&app).unwrap();
-
-    assert_eq!(
-        resp,
-        HighestBidResp {
-            highestbid: coin(950, "atom"),
-            highestbidder: Some(sender),
-        }
-    );
-}
-
-#[test]
-fn second_bid_fails() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
+    app.send_tokens(seller.clone(), buyer.clone(), &coins(50000, "uatom"))
         .unwrap();
 
-    let code_id = BiddingContract::store_code(&mut app);
+    let code_id = OTCContract::store_code(&mut app);
 
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
+    let contract = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &seller,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(100000, "uatom"),
+    )
+    .unwrap();
 
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    let err = contract
-        .bid(&mut app, &sender2, &coins(500, "atom"))
-        .unwrap_err();
-
-    assert_eq!(err, ContractError::Biddingfail {},);
-}
-
-#[test]
-fn second_bid_succeeds() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    let resp = contract.query_highestbid(&app).unwrap();
+    let resp = contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap_err();
 
     assert_eq!(
         resp,
-        HighestBidResp {
-            highestbid: coin(1140, "atom"),
-            highestbidder: Some(sender2),
-        }
+        ContractError::OfferFail
+    );
+}
+
+
+#[test]
+fn buy_succesfully_pay_more() {
+    let seller = Addr::unchecked("seller");
+    let buyer = Addr::unchecked("buyer");
+    let mut funds: Vec<Coin> = Vec::new();
+    funds.push(coin(10000000, "ujuno"));
+    funds.push(coin(100000, "uatom"));
+    let mut app = App::new(|router, _api, storage| {
+        router
+            .bank
+            .init_balance(storage, &seller.clone(), funds)
+            .unwrap();
+    });
+
+    app.send_tokens(seller.clone(), buyer.clone(), &coins(50000, "uatom"))
+        .unwrap();
+
+    let code_id = OTCContract::store_code(&mut app);
+
+    let contract = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &seller,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(10000, "uatom"),
+    )
+    .unwrap();
+
+    contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap();
+
+    assert_eq!(
+        app.wrap().query_all_balances(buyer).unwrap(),
+        coins(10000000, "ujuno")
     );
 }
 
 #[test]
-fn bidding_accumulates() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
+fn closed_succesfully() {
+    let seller = Addr::unchecked("seller");
+    let buyer = Addr::unchecked("buyer");
+    let mut funds: Vec<Coin> = Vec::new();
+    funds.push(coin(10000000, "ujuno"));
+    funds.push(coin(100000, "uatom"));
     let mut app = App::new(|router, _api, storage| {
         router
             .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
+            .init_balance(storage, &seller.clone(), funds)
             .unwrap();
     });
 
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
+    app.send_tokens(seller.clone(), buyer.clone(), &coins(50000, "uatom"))
         .unwrap();
 
-    let code_id = BiddingContract::store_code(&mut app);
+    let code_id = OTCContract::store_code(&mut app);
 
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
+    let contract = OTCContract::instantiate(
+        &mut app,
+        code_id,
+        &seller,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(50000, "uatom"),
+    )
+    .unwrap();
 
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-    let resp = contract.query_highestbid(&app).unwrap();
+    contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap();
+
+    let resp = contract.query_open(&app).unwrap();
 
     assert_eq!(
         resp,
-        HighestBidResp {
-            highestbid: coin(2850, "atom"),
-            highestbidder: Some(sender),
-        }
+        OpenResp { isopen: false }
     );
 }
 
 #[test]
-fn commission_is_received() {
+fn is_open() {
     let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
     let mut app = App::new(|router, _api, storage| {
         router
             .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
+            .init_balance(storage, &sender.clone(), coins(10000000, "ujuno"))
             .unwrap();
     });
 
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
+    let code_id = OTCContract::store_code(&mut app);
 
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
+    let contract = OTCContract::instantiate(
         &mut app,
         code_id,
         &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(10000, "uatom"),
     )
     .unwrap();
 
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
+    let resp = contract.query_open(&app).unwrap();
 
     assert_eq!(
-        app.wrap().query_all_balances(receiver).unwrap(),
-        coins(210, "atom")
+        resp,
+        OpenResp { isopen: true }
     );
 }
 
 #[test]
-fn closing_contract_successfully() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
+fn cant_buy_closed() {
+    let seller = Addr::unchecked("seller");
+    let buyer = Addr::unchecked("buyer");
+    let mut funds: Vec<Coin> = Vec::new();
+    funds.push(coin(10000000, "ujuno"));
+    funds.push(coin(100000, "uatom"));
     let mut app = App::new(|router, _api, storage| {
         router
             .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
+            .init_balance(storage, &seller.clone(), funds)
             .unwrap();
     });
 
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
+    app.send_tokens(seller.clone(), buyer.clone(), &coins(100000, "uatom"))
         .unwrap();
 
-    let code_id = BiddingContract::store_code(&mut app);
+    let code_id = OTCContract::store_code(&mut app);
 
-    let contract = BiddingContract::instantiate(
+    let contract = OTCContract::instantiate(
         &mut app,
         code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
+        &seller,
+        "OTC contract",
+        coins(10000000, "ujuno"),
+        coin(50000, "uatom"),
     )
     .unwrap();
 
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    contract.close(&mut app, &receiver.clone()).unwrap();
+    contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap();
+    let resp = contract.buy(&mut app, &buyer, &coins(50000, "uatom")).unwrap_err();
 
     assert_eq!(
-        app.wrap().query_all_balances(receiver).unwrap(),
-        coins(3060, "atom")
-    );
-}
-
-#[test]
-fn closing_twice() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    contract.close(&mut app, &receiver.clone()).unwrap();
-    let err = contract.close(&mut app, &receiver.clone()).unwrap_err();
-
-    assert_eq!(
-        err,
-        ContractError::ContractClosed
-    );
-}
-
-#[test]
-fn unauthorized_closing() {
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(1200, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    let err = contract.close(&mut app, &sender).unwrap_err();
-
-    assert_eq!(
-        err,
-        ContractError::NotOwner { owner: receiver.clone().to_string() }
-    );
-}
-
-#[test]
-fn closing_empty_contract() {
-    let mut app = App::default();
-    let sender = Addr::unchecked("sender");
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract =
-        BiddingContract::instantiate(&mut app, code_id, &sender, "Bidding contract", &None)
-            .unwrap();
-
-    let err = contract.close(&mut app, &sender).unwrap_err();
-
-    assert_eq!(
-        err,
-        ContractError::NoBids
-    );
-}
-
-#[test]
-fn retract_funds() {
-
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(2000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(2000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    contract.close(&mut app, &receiver.clone()).unwrap();
-    contract.retract(&mut app, &sender2).unwrap();
-    assert_eq!(
-        app.wrap().query_all_balances(sender2).unwrap(),
-        coins(1900, "atom")
-    );
-}
-
-#[test]
-fn retract_funds_to_receiver() {
-
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(2000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(2000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    contract.close(&mut app, &receiver.clone()).unwrap();
-
-    let receiver2 = Addr::unchecked("receiver2");
-    contract.retract_to(&mut app, &sender2, receiver2.clone()).unwrap();
-    assert_eq!(
-        app.wrap().query_all_balances(receiver2).unwrap(),
-        coins(1900, "atom")
-    );
-}
-
-#[test]
-fn retract_with_no_funds() {
-
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(2000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    contract.close(&mut app, &receiver.clone()).unwrap();
-
-    let err = contract.retract(&mut app, &sender).unwrap_err();
-    assert_eq!(
-        err,
-        ContractError::NoBids,
-    );
-}
-
-#[test]
-fn retract_not_closed() {
-
-    let sender = Addr::unchecked("sender");
-    let sender2 = Addr::unchecked("sender2");
-    let receiver = Addr::unchecked("receiver");
-    let mut app = App::new(|router, _api, storage| {
-        router
-            .bank
-            .init_balance(storage, &sender.clone(), coins(100000, "atom"))
-            .unwrap();
-    });
-
-    app.send_tokens(sender.clone(), sender2.clone(), &coins(50000, "atom"))
-        .unwrap();
-
-    let code_id = BiddingContract::store_code(&mut app);
-
-    let contract = BiddingContract::instantiate(
-        &mut app,
-        code_id,
-        &sender,
-        "Bidding contract",
-        &Some(receiver.clone()),
-    )
-    .unwrap();
-
-    contract
-        .bid(&mut app, &sender, &coins(1000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender2, &coins(2000, "atom"))
-        .unwrap();
-    contract
-        .bid(&mut app, &sender, &coins(2000, "atom"))
-        .unwrap();
-
-    let err = contract.retract(&mut app, &sender).unwrap_err();
-    assert_eq!(
-        err,
-        ContractError::ContractNotClosed,
+        resp,
+        ContractError::ContractClosed,
     );
 }

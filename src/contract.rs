@@ -1,240 +1,151 @@
-use cosmwasm_std::{coin, Addr, DepsMut, Response, StdResult};
+use cosmwasm_std::{Addr, Coin, DepsMut, Response};
 
-use crate::state::{CLOSED, COMMISSION, HIGHEST_BID, HIGHEST_BIDDER, OWNER, WINNER};
+use crate::{
+    error::ContractError,
+    state::{OFFER, OPEN, PRICE, RECEIVER},
+};
 
 use cw2::set_contract_version;
 
 const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub fn instantiate(deps: DepsMut, owner: Option<Addr>, sender: Addr) -> StdResult<Response> {
-
+//Receiver of commission
+const COMMISSION: u128 = 1;
+const COMMISSION_ADDRESS: &str = "address";
+pub fn instantiate(
+    deps: DepsMut,
+    sender: Addr,
+    funds: Vec<Coin>,
+    price: Coin,
+) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    
-    HIGHEST_BID.save(deps.storage, &coin(0, "atom"))?;
-    HIGHEST_BIDDER.save(deps.storage, &None)?;
-    CLOSED.save(deps.storage, &false)?;
-    WINNER.save(deps.storage, &None)?;
-    match owner {
-        None => OWNER.save(deps.storage, &sender)?,
-        Some(addr) => OWNER.save(deps.storage, &addr)?,
+
+    if funds.is_empty() {
+        return Err(ContractError::NoFunds);
     }
 
-    let commission = 5;
-    COMMISSION.save(deps.storage, &commission)?;
+    OFFER.save(deps.storage, &funds)?;
+    OPEN.save(deps.storage, &true)?;
+    RECEIVER.save(deps.storage, &sender)?;
+    PRICE.save(deps.storage, &price)?;
 
     let resp = Response::new()
         .add_attribute("action", "Instantiation")
-        .add_attribute("sender", sender.as_str())
-        .add_attribute("commission", commission.to_string());
+        .add_attribute("sender", sender.as_str());
 
     Ok(resp)
 }
 
 pub mod query {
-    use cosmwasm_std::{Deps, StdResult, Addr};
+    use cosmwasm_std::{Deps, StdResult};
 
-    use crate::{
-        msg::{HighestBidResp, OwnerResp, CurrentBidResp, ClosedResp, WinnerResp},
-        state::{HIGHEST_BID, HIGHEST_BIDDER, OWNER, TOTAL_BIDS, CLOSED, WINNER},
-    };
+    use crate::{msg::{OpenResp, ContractResp}, state::{OPEN, PRICE, RECEIVER, OFFER}};
 
-    pub fn highestbidvalue(deps: Deps) -> StdResult<HighestBidResp> {
-        let highestbid = HIGHEST_BID.load(deps.storage)?;
-        let highestbidder = HIGHEST_BIDDER.load(deps.storage)?;
-        Ok(HighestBidResp {
-            highestbid: highestbid,
-            highestbidder: highestbidder,
-        })
+    pub fn isopen(deps: Deps) -> StdResult<OpenResp> {
+        let open = OPEN.load(deps.storage)?;
+        return Ok(OpenResp { isopen: open });
     }
 
-    pub fn owneraddr(deps: Deps) -> StdResult<OwnerResp> {
-        let owner = OWNER.load(deps.storage)?;
-        Ok(OwnerResp { owner })
-    }
+    pub fn status(deps: Deps) -> StdResult<ContractResp> {
+        let open = OPEN.load(deps.storage)?;
+        let price = PRICE.load(deps.storage)?;
+        let receiver = RECEIVER.load(deps.storage)?;
+        let offer = OFFER.load(deps.storage)?;
 
-    pub fn currentbid(deps: Deps, address: Addr) -> StdResult<CurrentBidResp> {
-        let current_bid = TOTAL_BIDS.may_load(deps.storage, address)?;
-
-        Ok(CurrentBidResp { currentbid: current_bid})
-    }
-
-    pub fn isclosed(deps: Deps) -> StdResult<ClosedResp> {
-        let closed = CLOSED.load(deps.storage)?;
-        Ok(ClosedResp { isclosed: closed })
-    }
-
-    pub fn winner(deps: Deps) -> StdResult<WinnerResp> {
-        let winner = WINNER.load(deps.storage)?;
-        Ok(WinnerResp { winner: winner.unwrap() })
+        return Ok(ContractResp { isopen: open, offer: offer, price: price, receiver: receiver });
     }
 }
 
 pub mod exec {
-
-    use cosmwasm_std::{coin, coins, Addr, BankMsg, DepsMut, MessageInfo, Response, StdResult};
+    use cosmwasm_std::{coins, BankMsg, DepsMut, MessageInfo, Response, Env};
 
     use crate::{
         error::ContractError,
-        state::{CLOSED, COMMISSION, HIGHEST_BID, HIGHEST_BIDDER, OWNER, TOTAL_BIDS, WINNER},
+        state::{OPEN, PRICE, RECEIVER, OFFER},
     };
 
-    pub fn bid(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-        let closed = CLOSED.load(deps.storage)?;
-        if closed == true {
-            return Err(ContractError::ContractClosed);
-        }
+    use super::{COMMISSION, COMMISSION_ADDRESS};
 
-        if info.funds.iter().find(|coin| coin.denom == "atom") == None {
-            return Err(ContractError::BiddingEmpty {});
-        }
-
-        let new_bid = info
+    pub fn buy(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+        let price = PRICE.load(deps.storage)?;
+        if info
             .funds
             .iter()
-            .find(|coin| coin.denom == "atom")
-            .unwrap()
-            .amount
-            .u128();
-        let commission = COMMISSION.load(deps.storage)?;
-        let owner = OWNER.load(deps.storage)?;
+            .find(|coin| coin.denom == price.denom && coin.amount >= price.amount)
+            == None
+        {
+            return Err(ContractError::OfferFail);
+        }
 
-        let bank_msg = BankMsg::Send {
-            to_address: owner.to_string(),
-            amount: coins(new_bid * commission / 100, "atom"),
+        let payment = info
+            .funds
+            .iter()
+            .find(|coin| coin.denom == price.denom && coin.amount >= price.amount)
+            .unwrap();
+
+        let commission_amount = payment.amount.u128() * COMMISSION / 10000;
+        let amount_without_commission = payment.amount.u128() - commission_amount;
+        let commission_msg = BankMsg::Send {
+            to_address: COMMISSION_ADDRESS.to_string(),
+            amount: coins(commission_amount, payment.clone().denom),
         };
 
-        let bid_without_commission = coin(new_bid - new_bid * commission / 100, "atom");
+        let receiver = RECEIVER.load(deps.storage)?;
+        let to_owner_msg = BankMsg::Send {
+            to_address: receiver.to_string(),
+            amount: coins(amount_without_commission, payment.clone().denom),
+        };
 
-        let mut current_bid = TOTAL_BIDS.may_load(deps.storage, info.clone().sender)?;
-        if current_bid == None {
-            current_bid = Some(coin(0, "atom"));
-        }
+        let offer = OFFER.load(deps.storage)?;
+        let to_user_msg = BankMsg::Send {
+            to_address: info.sender.to_string(),
+            amount: offer,
+        };
 
-        let highest_bid = HIGHEST_BID.load(deps.storage)?;
-        let new_highest_bid = current_bid.unwrap().amount + bid_without_commission.amount;
-
-        if new_highest_bid < highest_bid.amount {
-            return Err(ContractError::Biddingfail {});
-        }
-
-        let resp = Response::new()
-            .add_message(bank_msg)
-            .add_attribute("action", "Bidding")
-            .add_attribute("sender", info.sender.as_str())
-            .add_attribute("new_highest_bid", new_highest_bid.to_string());
-
-        HIGHEST_BID.save(deps.storage, &coin(new_highest_bid.into(), "atom"))?;
-        HIGHEST_BIDDER.save(deps.storage, &Some(info.clone().sender))?;
-        TOTAL_BIDS.update(deps.storage, info.clone().sender, |_| -> StdResult<_> {
-            Ok(coin(new_highest_bid.into(), "atom"))
-        })?;
-
-        Ok(resp)
-    }
-
-    pub fn close(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-        let closed = CLOSED.load(deps.storage)?;
-        if closed == true {
+        let open = OPEN.load(deps.storage)?;
+        if open == false {
             return Err(ContractError::ContractClosed);
         }
-        let highestbidder = HIGHEST_BIDDER.load(deps.storage)?;
-
-        if highestbidder == None {
-            return Err(ContractError::NoBids);
-        }
-
-        let owner = OWNER.load(deps.storage)?;
-
-        if info.sender != owner {
-            return Err(ContractError::NotOwner {
-                owner: owner.to_string(),
-            });
-        }
-
-        let highest_bid = HIGHEST_BID.load(deps.storage)?;
-
-        let bank_msg = BankMsg::Send {
-            to_address: owner.to_string(),
-            amount: coins(highest_bid.amount.into(), highest_bid.denom),
-        };
-
-        WINNER.save(deps.storage, &highestbidder)?;
-        CLOSED.save(deps.storage, &true)?;
+        OPEN.save(deps.storage, &false)?;
 
         let resp = Response::new()
-            .add_message(bank_msg)
-            .add_attribute("action", "Closing")
-            .add_attribute("owner", info.sender.as_str())
-            .add_attribute("winner", highestbidder.clone().unwrap().to_string())
-            .add_attribute("bid", highest_bid.amount.to_string());
-
-        TOTAL_BIDS.remove(deps.storage, highestbidder.unwrap());
+            .add_message(commission_msg)
+            .add_message(to_owner_msg)
+            .add_message(to_user_msg)
+            .add_attribute("action", "Buying and closing OTC deal")
+            .add_attribute("buyer", info.sender.as_str());
 
         Ok(resp)
     }
 
-    pub fn retract(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-        let closed = CLOSED.load(deps.storage)?;
-        if closed == false {
-            return Err(ContractError::ContractNotClosed);
+    pub fn close(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, ContractError> {
+
+        let open = OPEN.load(deps.storage)?;
+        if open == false {
+            return Err(ContractError::ContractClosed);
         }
 
-        let current_bid = TOTAL_BIDS.may_load(deps.storage, info.clone().sender)?;
-        if current_bid == None{
-            return Err(ContractError::NoBids);
+        let receiver = RECEIVER.load(deps.storage)?;
+
+        if info.sender != receiver {
+            return Err(ContractError::NotOwner { owner: receiver.to_string() });
         }
 
-        let bank_msg = BankMsg::Send {
-            to_address: info.sender.to_string(),
-            amount: coins(
-                current_bid.clone().unwrap().amount.into(),
-                current_bid.clone().unwrap().denom,
-            ),
-        };
-
-        let resp = Response::new()
-            .add_message(bank_msg)
-            .add_attribute("action", "Retracting")
-            .add_attribute("sender", info.sender.as_str())
-            .add_attribute("amount", current_bid.unwrap().amount);
-
-        TOTAL_BIDS.remove(deps.storage, info.sender);
-
-        Ok(resp)
-    }
-
-    pub fn retract_to(
-        deps: DepsMut,
-        info: MessageInfo,
-        receiver: Addr,
-    ) -> Result<Response, ContractError> {
-        let closed = CLOSED.load(deps.storage)?;
-        if closed == false {
-            return Err(ContractError::ContractNotClosed);
-        }
-
-        let current_bid = TOTAL_BIDS.may_load(deps.storage, info.clone().sender)?;
-        if current_bid == None{
-            return Err(ContractError::NoBids);
-        }
-
+        let balance = deps.querier.query_all_balances(&env.contract.address)?;
         let bank_msg = BankMsg::Send {
             to_address: receiver.to_string(),
-            amount: coins(
-                current_bid.clone().unwrap().amount.into(),
-                current_bid.clone().unwrap().denom,
-            ),
+            amount: balance,
         };
+        
+        OPEN.save(deps.storage, &false)?;
 
         let resp = Response::new()
             .add_message(bank_msg)
-            .add_attribute("action", "Retracting")
-            .add_attribute("sender", info.sender.as_str())
-            .add_attribute("amount", current_bid.unwrap().amount);
-
-        TOTAL_BIDS.remove(deps.storage, info.sender);
+            .add_attribute("action", "Cancelling OTC deal")
+            .add_attribute("buyer", info.sender.as_str());
 
         Ok(resp)
+
     }
 }
