@@ -18,11 +18,11 @@ mod state;
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    contract::instantiate(deps, info.sender, info.funds, msg.price)
+    contract::instantiate(deps, info.sender, msg.amount, msg.denom, msg.cw20offer, msg.priceamount, msg.pricedenom, msg.cw20price, env)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -39,7 +39,7 @@ pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    env: Env,
+    _env: Env,
     info: MessageInfo,
     msg: msg::ExecMsg,
 ) -> Result<Response, ContractError> {
@@ -48,6 +48,6 @@ pub fn execute(
 
     match msg {
         Buy {} => exec::buy(deps, info),
-        Close {} => exec::close(deps, env, info),
+        Close {} => exec::close(deps, info),
     }
 }

@@ -9,11 +9,11 @@ pub enum ContractError {
     #[error("No offer made")]
     NoFunds,
 
-    #[error("OTC deal is already closed")]
-    ContractClosed,
+    #[error("You can only offer 1 asset")]
+    NotOneAsset,
 
-    #[error("Offer failed, must be equal or higher than asking price")]
-    OfferFail,
+    #[error("Contract already closed")]
+    ContractClosed,
 
     #[error("You can't close the contract. Only {owner} can")]
     NotOwner { owner: String },

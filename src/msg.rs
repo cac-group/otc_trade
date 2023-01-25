@@ -1,5 +1,4 @@
 use cosmwasm_std::Addr;
-use cosmwasm_std::Coin;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_schema::QueryResponses;
 
@@ -26,12 +25,20 @@ pub struct OpenResp{
 #[cw_serde]
 pub struct ContractResp{
     pub isopen: bool,
-    pub offer: Vec<Coin>,
-    pub price: Coin,
+    pub offeramount: u128,
+    pub offerdenom: String,
+    pub priceamount: u128,
+    pub pricedenom: String,
     pub receiver: Addr,
+    pub time: u64,
 }
 
 #[cw_serde]
 pub struct InstantiateMsg {
-    pub price: Coin,
+    pub amount: u128,
+    pub denom: Option<String>,
+    pub cw20offer: Option<Addr>,
+    pub priceamount: u128,
+    pub pricedenom: Option<String>,
+    pub cw20price: Option<Addr>,
 }

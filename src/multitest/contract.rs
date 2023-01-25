@@ -1,4 +1,4 @@
-use cosmwasm_std::{Addr, Coin, StdResult};
+use cosmwasm_std::{Addr, StdResult};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
 use crate::{
@@ -24,16 +24,25 @@ impl OTCContract {
         code_id: u64,
         sender: &Addr,
         label: &str,
-        funds: Vec<Coin>,
-        price: Coin,
+        offeramount: u128,
+        offerdenom: Option<String>,
+        offercw20: Option<Addr>,
+        priceamount: u128,
+        pricedenom: Option<String>,
+        pricecw20: Option<Addr>
     ) -> Result<Self, ContractError> {
         app.instantiate_contract(
             code_id,
             sender.clone(),
             &InstantiateMsg {
-                price: price.clone(),
+                amount: offeramount,
+                denom: offerdenom,
+                cw20offer: offercw20,
+                priceamount: priceamount,
+                pricedenom: pricedenom,
+                cw20price: pricecw20,
             },
-            &funds,
+            &[],
             label,
             None,
         )
@@ -54,49 +63,9 @@ impl OTCContract {
     }
 
     #[track_caller]
-    pub fn buy(&self, app: &mut App, sender: &Addr, funds: &[Coin]) -> Result<(), ContractError> {
-        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Buy {}, funds)
+    pub fn buy(&self, app: &mut App, sender: &Addr) -> Result<(), ContractError> {
+        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Buy {}, &[])
             .map_err(|err| err.downcast().unwrap())
             .map(|_| ())
     }
-    /*
-    #[track_caller]
-    pub fn query_highestbid(&self, app: &App) -> StdResult<HighestBidResp> {
-        app.wrap()
-            .query_wasm_smart(self.0.clone(), &QueryMsg::HighestBid {})
-    }
-
-    #[track_caller]
-    pub fn query_owner(&self, app: &App) -> StdResult<OwnerResp> {
-        app.wrap()
-            .query_wasm_smart(self.0.clone(), &QueryMsg::Owner {})
-    }
-
-    #[track_caller]
-    pub fn bid(&self, app: &mut App, sender: &Addr, funds: &[Coin]) -> Result<(), ContractError> {
-        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Bid {}, funds)
-            .map_err(|err| err.downcast().unwrap())
-            .map(|_| ())
-    }
-
-    #[track_caller]
-    pub fn close(&self, app: &mut App, sender: &Addr) -> Result<(), ContractError> {
-        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Close {}, &[])
-            .map_err(|err| err.downcast().unwrap())
-            .map(|_| ())
-    }
-
-    #[track_caller]
-    pub fn retract(&self, app: &mut App, sender: &Addr) -> Result<(), ContractError> {
-        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::Retract {}, &[])
-            .map_err(|err| err.downcast().unwrap())
-            .map(|_| ())
-    }
-
-    #[track_caller]
-    pub fn retract_to(&self, app: &mut App, sender: &Addr, receiver: Addr) -> Result<(), ContractError> {
-        app.execute_contract(sender.clone(), self.0.clone(), &ExecMsg::RetractTo { receiver: receiver }, &[])
-            .map_err(|err| err.downcast().unwrap())
-            .map(|_| ())
-    }*/
 }
