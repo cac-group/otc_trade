@@ -1,0 +1,1 @@
+583696d7e71615725bd8258ef11771f896fe327a3e0ac4877e4205dba8feb32c  ./target/wasm32-unknown-unknown/release/otc_trade.wasm

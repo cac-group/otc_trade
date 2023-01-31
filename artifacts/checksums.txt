@@ -1,0 +1,1 @@
+8e5f0a63fd08b64d7172c5b74995f7f373237c212319bdf9a3453abe5dd13cba  otc_trade.wasm

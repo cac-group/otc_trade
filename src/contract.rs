@@ -1,12 +1,6 @@
-use cosmwasm_std::{
-    attr, coin, coins, to_binary, Addr, BankMsg, CosmosMsg, DepsMut, Env, Response, WasmMsg,
-};
-use cw20::Cw20ExecuteMsg;
+use cosmwasm_std::{DepsMut, Response};
 
-use crate::{
-    error::ContractError,
-    state::{IS_OFFER_CW20, IS_PRICE_CW20, OFFER, OPEN, PRICE, RECEIVER, TIME_CREATION},
-};
+use crate::error::ContractError;
 
 use cw2::set_contract_version;
 
@@ -19,87 +13,9 @@ const COMMISSION_1_ADDRESS: &str = "juno1ep2umj6kn34g2ttjalsc5r9w8pt7sv4xnsvmdx"
 const COMMISSION_2: u128 = 2;
 const COMMISSION_2_ADDRESS: &str = "juno1wev8ptzj27aueu04wgvvl4gvurax6rj5la09yj";
 
-pub fn instantiate(
-    deps: DepsMut,
-    sender: Addr,
-    offeramount: u128,
-    offerdenom: Option<String>,
-    cw20offer: Option<Addr>,
-    priceamount: u128,
-    pricedenom: Option<String>,
-    cw20price: Option<Addr>,
-    env: Env,
-) -> Result<Response, ContractError> {
+pub fn instantiate(deps: DepsMut) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    if offeramount == 0 {
-        return Err(ContractError::NoFunds);
-    }
-
-    if (offerdenom.is_none() && cw20offer.is_none())
-        || (pricedenom.is_none() && cw20price.is_none())
-        || (offerdenom.is_some() && cw20offer.is_some())
-        || (pricedenom.is_some() && cw20price.is_some())
-    {
-        return Err(ContractError::NotOneAsset);
-    }
-
-    let commission1_amount = offeramount * COMMISSION_1 / 100000;
-    let commission2_amount = offeramount * COMMISSION_2 / 100000;
-
-    let amount_with_commission = offeramount + commission1_amount + commission2_amount;
-
-    let resp;
-    if offerdenom.is_some() {
-        //NOT cw20
-        let message = CosmosMsg::Bank(BankMsg::Send {
-            to_address: env.contract.address.into_string(),
-            amount: coins(amount_with_commission, offerdenom.clone().unwrap()),
-        });
-        OFFER.save(deps.storage, &coin(offeramount, offerdenom.unwrap()))?;
-        IS_OFFER_CW20.save(deps.storage, &false)?;
-        resp = Response::new()
-            .add_message(message)
-            .add_attribute("action", "Instantiation")
-            .add_attribute("sender", sender.as_str());
-    } else {
-        //cw20
-        let transfer_from = Cw20ExecuteMsg::TransferFrom {
-            owner: sender.clone().into(),
-            recipient: env.contract.address.clone().into(),
-            amount: amount_with_commission.into(),
-        };
-        let exec_message = WasmMsg::Execute {
-            contract_addr: cw20offer.clone().unwrap().into(),
-            msg: to_binary(&transfer_from)?,
-            funds: vec![],
-        };
-        OFFER.save(deps.storage, &coin(offeramount, cw20offer.unwrap()))?;
-        IS_OFFER_CW20.save(deps.storage, &true)?;
-        resp = Response::new()
-            .add_message(exec_message)
-            .add_attributes(vec![
-                attr("action", "Instantiation"),
-                attr("sender", sender.as_str()),
-            ]);
-    }
-
-    if pricedenom.is_some() {
-        PRICE.save(deps.storage, &coin(priceamount, pricedenom.unwrap()))?;
-        IS_PRICE_CW20.save(deps.storage, &false)?;
-    } else {
-        PRICE.save(
-            deps.storage,
-            &coin(priceamount, cw20price.unwrap().to_string()),
-        )?;
-        IS_PRICE_CW20.save(deps.storage, &true)?;
-    }
-
-    OPEN.save(deps.storage, &true)?;
-    RECEIVER.save(deps.storage, &sender)?;
-    TIME_CREATION.save(deps.storage, &env.block.time.seconds())?;
-
-    Ok(resp)
+    Ok(Response::new().add_attribute("action", "Instantiation"))
 }
 
 pub mod query {
@@ -107,7 +23,7 @@ pub mod query {
 
     use crate::{
         msg::{ContractResp, OpenResp},
-        state::{OFFER, OPEN, PRICE, RECEIVER, TIME_CREATION},
+        state::{COMPLETED, OFFER, OPEN, PRICE, RECEIVER, TIME_CREATION},
     };
 
     pub fn isopen(deps: Deps) -> StdResult<OpenResp> {
@@ -120,6 +36,7 @@ pub mod query {
         let price = PRICE.load(deps.storage)?;
         let receiver = RECEIVER.load(deps.storage)?;
         let offer = OFFER.load(deps.storage)?;
+        let completed = COMPLETED.load(deps.storage)?;
         let time = TIME_CREATION.load(deps.storage)?;
 
         return Ok(ContractResp {
@@ -129,6 +46,7 @@ pub mod query {
             priceamount: price.amount.u128(),
             pricedenom: price.denom,
             receiver: receiver,
+            completed: completed,
             time: time,
         });
     }
@@ -136,127 +54,215 @@ pub mod query {
 
 pub mod exec {
     use cosmwasm_std::{
-        attr, coins, to_binary, BankMsg, CosmosMsg, DepsMut, MessageInfo, Response, WasmMsg,
+        coin, coins, to_binary, Addr, BankMsg, DepsMut, Env, MessageInfo, Response, WasmMsg,
     };
     use cw20::Cw20ExecuteMsg;
 
     use crate::{
         error::ContractError,
-        state::{IS_OFFER_CW20, IS_PRICE_CW20, OFFER, OPEN, PRICE, RECEIVER},
+        state::{
+            COMPLETED, IS_OFFER_CW20, IS_PRICE_CW20, OFFER, OPEN, PRICE, RECEIVER,
+            TIME_CREATION,
+        },
     };
 
     use super::{COMMISSION_1, COMMISSION_1_ADDRESS, COMMISSION_2, COMMISSION_2_ADDRESS};
 
-    pub fn buy(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-
-        let price = PRICE.load(deps.storage)?;
-        let receiver = RECEIVER.load(deps.storage)?;
-        let mut resp = Response::new();
-
-        let is_price_cw20 = IS_PRICE_CW20.load(deps.storage)?;
-        if !is_price_cw20 {
-            let to_owner_message: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
-                to_address: receiver.clone().into_string(),
-                amount: coins(price.amount.u128(), price.denom),
-            });
-            resp = resp.add_message(to_owner_message);
-        } else {
-            let transfer_from = Cw20ExecuteMsg::TransferFrom {
-                owner: info.sender.clone().into(),
-                recipient: receiver.clone().into_string(),
-                amount: price.amount,
-            };
-            let exec_message = WasmMsg::Execute {
-                contract_addr: price.denom,
-                msg: to_binary(&transfer_from)?,
-                funds: vec![],
-            };
-            resp = resp.add_message(exec_message);
+    pub fn open(
+        deps: DepsMut,
+        info: MessageInfo,
+        amount: Option<String>,
+        cw20contract: Option<Addr>,
+        priceamount: String,
+        pricedenom: String,
+        iscw20: String,
+        env: Env,
+    ) -> Result<Response, ContractError> {
+        if info.funds.is_empty() && amount.is_none() {
+            return Err(ContractError::NoFunds);
         }
 
-        let offer = OFFER.load(deps.storage)?;
-        let commission1 = offer.amount.u128() * COMMISSION_1 / 100000;
-        let commission2 = offer.amount.u128() * COMMISSION_2 / 100000;
-        let is_cw20 = IS_OFFER_CW20.load(deps.storage)?;
+        if amount.is_none() && info.funds[0].amount.u128() == 0 {
+            return Err(ContractError::NoFunds);
+        }
 
-        if is_cw20 {
-            let transfer1 = Cw20ExecuteMsg::Transfer {
+        if !info.funds.is_empty() && amount.is_some() {
+            return Err(ContractError::NotOneAsset);
+        }
+
+        if amount.is_some() && cw20contract.is_none() || amount.is_none() && cw20contract.is_some()
+        {
+            return Err(ContractError::NoContract);
+        }
+
+        OPEN.save(deps.storage, &true)?;
+        let resp;
+        if amount.is_none() {
+            let commission1_amount = info.funds[0].amount.u128() * COMMISSION_1 / 100000;
+            let commission2_amount = info.funds[0].amount.u128() * COMMISSION_2 / 100000;
+            let amount_without_commission =
+                info.funds[0].amount.u128() - commission1_amount - commission2_amount;
+            OFFER.save(
+                deps.storage,
+                &coin(
+                    amount_without_commission.into(),
+                    info.funds[0].denom.to_string(),
+                ),
+            )?;
+            IS_OFFER_CW20.save(deps.storage, &false)?;
+
+            let commission1_msg = BankMsg::Send {
+                to_address: COMMISSION_1_ADDRESS.into(),
+                amount: coins(commission1_amount.into(), info.funds[0].denom.to_string()),
+            };
+            let commission2_msg = BankMsg::Send {
+                to_address: COMMISSION_2_ADDRESS.into(),
+                amount: coins(commission2_amount.into(), info.funds[0].denom.to_string()),
+            };
+
+            resp = Response::new()
+                .add_message(commission1_msg)
+                .add_message(commission2_msg)
+                .add_attribute("action", "Open Trade");
+        } else {
+            let commission1_amount = amount.clone().unwrap().parse::<u128>().unwrap() * COMMISSION_1 / 100000;
+            let commission2_amount = amount.clone().unwrap().parse::<u128>().unwrap() * COMMISSION_2 / 100000;
+            let amount_without_commission: u128 =
+                amount.unwrap().parse::<u128>().unwrap() - commission1_amount - commission2_amount;
+
+            let transfer1 = Cw20ExecuteMsg::TransferFrom {
+                owner: info.sender.clone().into(),
                 recipient: COMMISSION_1_ADDRESS.into(),
-                amount: commission1.into(),
+                amount: commission1_amount.into(),
             };
 
             let execute_msg1 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
+                contract_addr: cw20contract.clone().unwrap().into(),
                 msg: to_binary(&transfer1)?,
                 funds: vec![],
             };
 
-            let transfer2 = Cw20ExecuteMsg::Transfer {
+            let transfer2 = Cw20ExecuteMsg::TransferFrom {
+                owner: info.sender.clone().into(),
                 recipient: COMMISSION_2_ADDRESS.into(),
-                amount: commission2.into(),
+                amount: commission2_amount.into(),
             };
 
             let execute_msg2 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
+                contract_addr: cw20contract.clone().unwrap().into(),
                 msg: to_binary(&transfer2)?,
                 funds: vec![],
             };
 
-            let transfer3 = Cw20ExecuteMsg::Transfer {
-                recipient: info.sender.clone().into(),
-                amount: offer.amount,
+            let transfer3 = Cw20ExecuteMsg::TransferFrom {
+                owner: info.sender.clone().into(),
+                recipient: env.contract.address.into(),
+                amount: amount_without_commission.into(),
             };
 
             let execute_msg3 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
+                contract_addr: cw20contract.clone().unwrap().into(),
                 msg: to_binary(&transfer3)?,
                 funds: vec![],
             };
 
-            resp = resp
+            OFFER.save(
+                deps.storage,
+                &coin(amount_without_commission.into(), cw20contract.unwrap()),
+            )?;
+            IS_OFFER_CW20.save(deps.storage, &true)?;
+
+            resp = Response::new()
                 .add_message(execute_msg1)
                 .add_message(execute_msg2)
                 .add_message(execute_msg3)
-                .add_attributes(vec![
-                    attr("action", "buying and closing"),
-                    attr("sender", info.sender),
-                ]);
+                .add_attribute("action", "Open cw20 trade");
+        }
+
+        COMPLETED.save(deps.storage, &false)?;
+        RECEIVER.save(deps.storage, &info.sender)?;
+        TIME_CREATION.save(deps.storage, &env.block.time.seconds())?;
+        PRICE.save(deps.storage, &coin(priceamount.parse::<u128>().unwrap(), pricedenom))?;
+
+        if iscw20 == "1" {
+            IS_PRICE_CW20.save(deps.storage, &true)?;
         } else {
-            let transfer1 = BankMsg::Send {
-                to_address: COMMISSION_1_ADDRESS.into(),
-                amount: coins(commission1, offer.denom.clone()),
+            IS_PRICE_CW20.save(deps.storage, &false)?;
+        }
+
+        Ok(resp)
+    }
+
+    pub fn buy(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+        let price = PRICE.load(deps.storage)?;
+        let receiver = RECEIVER.load(deps.storage)?;
+        let is_price_cw20 = IS_PRICE_CW20.load(deps.storage)?;
+        let offer = OFFER.load(deps.storage)?;
+        let is_offer_cw20 = IS_OFFER_CW20.load(deps.storage)?;
+        let open = OPEN.load(deps.storage)?;
+
+        if !open {
+            return Err(ContractError::ContractClosed);
+        }
+
+        let mut resp = Response::new();
+        if is_price_cw20 {
+            let transfer = Cw20ExecuteMsg::TransferFrom {
+                owner: info.sender.clone().into(),
+                recipient: receiver.to_string(),
+                amount: price.amount,
             };
 
-            let transfer2 = BankMsg::Send {
-                to_address: COMMISSION_2_ADDRESS.into(),
-                amount: coins(commission2, offer.denom.clone()),
+            let execute_msg = WasmMsg::Execute {
+                contract_addr: price.denom,
+                msg: to_binary(&transfer)?,
+                funds: vec![],
+            };
+            resp = resp.add_message(execute_msg);
+        } else {
+            let price_msg = BankMsg::Send {
+                to_address: receiver.to_string(),
+                amount: coins(price.amount.u128(), price.denom),
             };
 
-            let transfer3 = BankMsg::Send {
-                to_address: info.sender.clone().into(),
-                amount: coins(offer.amount.u128(), offer.denom.clone()),
+            resp = resp.add_message(price_msg);
+        }
+
+        if is_offer_cw20 {
+            let transfer = Cw20ExecuteMsg::Transfer {
+                recipient: info.sender.into_string(),
+                amount: offer.amount,
             };
 
-            resp = resp
-                .add_message(transfer1)
-                .add_message(transfer2)
-                .add_message(transfer3)
-                .add_attribute("action", "Buying and closing OTC Deal")
-                .add_attribute("recipient", info.sender.as_str());
+            let execute = WasmMsg::Execute {
+                contract_addr: offer.denom.into(),
+                msg: to_binary(&transfer)?,
+                funds: vec![],
+            };
+
+            resp = resp.add_message(execute)
+        } else {
+            let offer_msg = BankMsg::Send {
+                to_address: info.sender.into_string(),
+                amount: coins(offer.amount.u128(), offer.denom),
+            };
+            resp = resp.add_message(offer_msg)
         }
 
         OPEN.save(deps.storage, &false)?;
+        COMPLETED.save(deps.storage, &true)?;
+
+        resp = resp.add_attribute("action", "buy, close trade and mark as completed");
 
         Ok(resp)
     }
 
     pub fn close(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
         let open = OPEN.load(deps.storage)?;
+
         if open == false {
             return Err(ContractError::ContractClosed);
         }
-
-        OPEN.save(deps.storage, &true)?;
 
         let receiver = RECEIVER.load(deps.storage)?;
 
@@ -266,77 +272,37 @@ pub mod exec {
             });
         }
 
-        let resp;
         let offer = OFFER.load(deps.storage)?;
-        let commission1 = offer.amount.u128() * COMMISSION_1 / 100000;
-        let commission2 = offer.amount.u128() * COMMISSION_2 / 100000;
-        let is_cw20 = IS_OFFER_CW20.load(deps.storage)?;
+        let is_offer_cw20 = IS_OFFER_CW20.load(deps.storage)?;
+        let resp;
 
-        if is_cw20 {
-            let transfer1 = Cw20ExecuteMsg::Transfer {
-                recipient: COMMISSION_1_ADDRESS.into(),
-                amount: commission1.into(),
-            };
-
-            let execute_msg1 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
-                msg: to_binary(&transfer1)?,
-                funds: vec![],
-            };
-
-            let transfer2 = Cw20ExecuteMsg::Transfer {
-                recipient: COMMISSION_2_ADDRESS.into(),
-                amount: commission2.into(),
-            };
-
-            let execute_msg2 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
-                msg: to_binary(&transfer2)?,
-                funds: vec![],
-            };
-
-            let transfer3 = Cw20ExecuteMsg::Transfer {
-                recipient: info.sender.clone().into(),
+        if is_offer_cw20 {
+            let transfer = Cw20ExecuteMsg::Transfer {
+                recipient: receiver.to_string(),
                 amount: offer.amount,
             };
 
-            let execute_msg3 = WasmMsg::Execute {
-                contract_addr: offer.denom.clone().into(),
-                msg: to_binary(&transfer3)?,
+            let execute = WasmMsg::Execute {
+                contract_addr: offer.denom.into(),
+                msg: to_binary(&transfer)?,
                 funds: vec![],
             };
 
             resp = Response::new()
-                .add_message(execute_msg1)
-                .add_message(execute_msg2)
-                .add_message(execute_msg3)
-                .add_attributes(vec![
-                    attr("action", "closing_contract"),
-                    attr("sender", info.sender),
-                ])
+                .add_message(execute)
+                .add_attribute("action", "Cancelling trade");
         } else {
-            let transfer1 = BankMsg::Send {
-                to_address: COMMISSION_1_ADDRESS.into(),
-                amount: coins(commission1, offer.denom.clone()),
+            let return_msg = BankMsg::Send {
+                to_address: receiver.to_string(),
+                amount: coins(offer.amount.u128(), offer.denom),
             };
-
-            let transfer2 = BankMsg::Send {
-                to_address: COMMISSION_2_ADDRESS.into(),
-                amount: coins(commission2, offer.denom.clone()),
-            };
-
-            let transfer3 = BankMsg::Send {
-                to_address: info.sender.clone().into(),
-                amount: coins(offer.amount.u128(), offer.denom.clone()),
-            };
-
             resp = Response::new()
-                .add_message(transfer1)
-                .add_message(transfer2)
-                .add_message(transfer3)
-                .add_attribute("action", "Cancelling OTC deal")
-                .add_attribute("recipient", info.sender.as_str());
+                .add_message(return_msg)
+                .add_attribute("action", "Cancelling trade")
         }
+
+        OPEN.save(deps.storage, &false)?;
+        COMPLETED.save(deps.storage, &false)?;
 
         Ok(resp)
     }

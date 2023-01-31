@@ -1,5 +1,5 @@
 [package]
-name = "otc_platform"
+name = "otc_trade"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,18 +9,13 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 library = []
-tests = ["library", "cw-multi-test"]
 
 [dependencies]
 cosmwasm-schema = "1.1.9"
 cosmwasm-std = "1.1.9"
-cw-multi-test = { version = "0.16.2", optional = true }
 cw-storage-plus = "1.0.1"
 cw2 = "1.0.1"
 cw20 = "1.0.1"
 schemars = "0.8.11"
 serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.38"
-
-[dev-dependencies]
-cw-multi-test = "0.16.2"

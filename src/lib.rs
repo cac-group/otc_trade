@@ -9,20 +9,18 @@ use error::ContractError;
 use msg::InstantiateMsg;
 
 mod contract;
-pub mod msg;
 pub mod error;
-#[cfg(any(test, feature = "tests"))]
-pub mod multitest;
+pub mod msg;
 mod state;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    msg: InstantiateMsg,
+    _env: Env,
+    _info: MessageInfo,
+    _msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    contract::instantiate(deps, info.sender, msg.amount, msg.denom, msg.cw20offer, msg.priceamount, msg.pricedenom, msg.cw20price, env)
+    contract::instantiate(deps)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -31,15 +29,15 @@ pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
     use msg::QueryMsg::*;
 
     match msg {
-        IsOpen{} => to_binary(&query::isopen(deps)?),
-        Status{} => to_binary(&query::status(deps)?),
+        IsOpen {} => to_binary(&query::isopen(deps)?),
+        Status {} => to_binary(&query::status(deps)?),
     }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: msg::ExecMsg,
 ) -> Result<Response, ContractError> {
@@ -47,6 +45,13 @@ pub fn execute(
     use msg::ExecMsg::*;
 
     match msg {
+        Open {
+            amount,
+            cw20contract,
+            priceamount,
+            pricedenom,
+            iscw20,
+        } => exec::open(deps, info, amount, cw20contract, priceamount, pricedenom, iscw20, env),
         Buy {} => exec::buy(deps, info),
         Close {} => exec::close(deps, info),
     }

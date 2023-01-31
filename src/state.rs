@@ -6,5 +6,6 @@ pub const IS_OFFER_CW20: Item<bool> = Item::new("cw20offer");
 pub const PRICE: Item<Coin> = Item::new("price");
 pub const IS_PRICE_CW20: Item<bool> = Item::new("cw20price");
 pub const OPEN: Item<bool> = Item::new("open");
+pub const COMPLETED: Item<bool> = Item::new("completed");
 pub const RECEIVER: Item<Addr> = Item::new("receiver");
 pub const TIME_CREATION: Item<u64> = Item::new("time_creation");
