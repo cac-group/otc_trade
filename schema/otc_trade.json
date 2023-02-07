@@ -21,6 +21,7 @@
           "open": {
             "type": "object",
             "required": [
+              "exp",
               "iscw20",
               "priceamount",
               "pricedenom"
@@ -42,6 +43,38 @@
                   }
                 ]
               },
+              "exp": {
+                "type": "string"
+              },
+              "iscw20": {
+                "type": "string"
+              },
+              "priceamount": {
+                "type": "string"
+              },
+              "pricedenom": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "changeprice"
+        ],
+        "properties": {
+          "changeprice": {
+            "type": "object",
+            "required": [
+              "iscw20",
+              "priceamount",
+              "pricedenom"
+            ],
+            "properties": {
               "iscw20": {
                 "type": "string"
               },

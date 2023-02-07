@@ -19,14 +19,19 @@ pub enum ExecMsg {
         priceamount: String,
         pricedenom: String,
         iscw20: String,
+        exp: String,
+    },
+    Changeprice {
+        priceamount: String,
+        pricedenom: String,
+        iscw20: String,
     },
     Buy {},
     Close {},
 }
 
 #[cw_serde]
-pub struct InstantiateMsg {
-}
+pub struct InstantiateMsg {}
 
 #[cw_serde]
 pub struct OpenResp {

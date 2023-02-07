@@ -61,8 +61,7 @@ pub mod exec {
     use crate::{
         error::ContractError,
         state::{
-            COMPLETED, IS_OFFER_CW20, IS_PRICE_CW20, OFFER, OPEN, PRICE, RECEIVER,
-            TIME_CREATION,
+            COMPLETED, IS_OFFER_CW20, IS_PRICE_CW20, OFFER, OPEN, PRICE, RECEIVER, TIME_CREATION,
         },
     };
 
@@ -76,6 +75,7 @@ pub mod exec {
         priceamount: String,
         pricedenom: String,
         iscw20: String,
+        exp: String,
         env: Env,
     ) -> Result<Response, ContractError> {
         if info.funds.is_empty() && amount.is_none() {
@@ -98,8 +98,10 @@ pub mod exec {
         OPEN.save(deps.storage, &true)?;
         let resp;
         if amount.is_none() {
-            let commission1_amount = info.funds[0].amount.u128() * COMMISSION_1 / 100000;
-            let commission2_amount = info.funds[0].amount.u128() * COMMISSION_2 / 100000;
+            let commission1_amount =
+                info.funds[0].amount.u128() * COMMISSION_1 / (exp.parse::<u128>().unwrap() / 100);
+            let commission2_amount =
+                info.funds[0].amount.u128() * COMMISSION_2 / (exp.parse::<u128>().unwrap() / 100);
             let amount_without_commission =
                 info.funds[0].amount.u128() - commission1_amount - commission2_amount;
             OFFER.save(
@@ -125,8 +127,12 @@ pub mod exec {
                 .add_message(commission2_msg)
                 .add_attribute("action", "Open Trade");
         } else {
-            let commission1_amount = amount.clone().unwrap().parse::<u128>().unwrap() * COMMISSION_1 / 100000;
-            let commission2_amount = amount.clone().unwrap().parse::<u128>().unwrap() * COMMISSION_2 / 100000;
+            let commission1_amount = amount.clone().unwrap().parse::<u128>().unwrap()
+                * COMMISSION_1
+                / (exp.parse::<u128>().unwrap() / 100);
+            let commission2_amount = amount.clone().unwrap().parse::<u128>().unwrap()
+                * COMMISSION_2
+                / (exp.parse::<u128>().unwrap() / 100);
             let amount_without_commission: u128 =
                 amount.unwrap().parse::<u128>().unwrap() - commission1_amount - commission2_amount;
 
@@ -182,7 +188,10 @@ pub mod exec {
         COMPLETED.save(deps.storage, &false)?;
         RECEIVER.save(deps.storage, &info.sender)?;
         TIME_CREATION.save(deps.storage, &env.block.time.seconds())?;
-        PRICE.save(deps.storage, &coin(priceamount.parse::<u128>().unwrap(), pricedenom))?;
+        PRICE.save(
+            deps.storage,
+            &coin(priceamount.parse::<u128>().unwrap(), pricedenom),
+        )?;
 
         if iscw20 == "1" {
             IS_PRICE_CW20.save(deps.storage, &true)?;
@@ -255,6 +264,44 @@ pub mod exec {
         resp = resp.add_attribute("action", "buy, close trade and mark as completed");
 
         Ok(resp)
+    }
+
+    pub fn change_price(
+        deps: DepsMut,
+        info: MessageInfo,
+        priceamount: String,
+        pricedenom: String,
+        iscw20: String,
+    ) -> Result<Response, ContractError> {
+        let open = OPEN.load(deps.storage)?;
+
+        if open == false {
+            return Err(ContractError::ContractClosed);
+        }
+
+        let receiver = RECEIVER.load(deps.storage)?;
+
+        if info.sender != receiver {
+            return Err(ContractError::NotOwner {
+                owner: receiver.to_string(),
+            });
+        }
+
+        PRICE.save(
+            deps.storage,
+            &coin(priceamount.parse::<u128>().unwrap(), pricedenom.clone()),
+        )?;
+
+        if iscw20 == "1" {
+            IS_PRICE_CW20.save(deps.storage, &true)?;
+        } else {
+            IS_PRICE_CW20.save(deps.storage, &false)?;
+        }
+
+        Ok(Response::new()
+            .add_attribute("action", "Price Change")
+            .add_attribute("New Price Amount", priceamount)
+            .add_attribute("New Price Denom", pricedenom))
     }
 
     pub fn close(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {

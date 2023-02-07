@@ -1,5 +1,5 @@
 use cosmwasm_schema::write_api;
-use otc_trade::msg::{ExecMsg, QueryMsg, InstantiateMsg};
+use otc_trade::msg::{ExecMsg, InstantiateMsg, QueryMsg};
 
 fn main() {
     write_api! {
