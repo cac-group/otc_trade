@@ -1,2 +1,1 @@
-# OTC platform
-# otc_platform
+OTC contract to perform OTC trades with a 0.1% commission /// IBC asset or CW20 token <-> IBC asset or CW20 token /// The seller will offer a token a and give it a price. The buyer can buy for the specified price. The seller can cancel the order as long as it hasn't been bought yet. 
